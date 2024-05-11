@@ -1,7 +1,13 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::format;
+use std::iter::Map;
+use std::rc::Rc;
 use std::sync::Arc;
 use postgres;
 use postgres::{Client, Row};
+use crate::core::btree::{Item, MetadataPage, RowData, Tid};
+use crate::core::Page;
 
 pub fn init_client(host: String, port: String, db: String) -> Client {
     Client::connect(&format!("host={} port={} dbname={}", host, port, db), postgres::NoTls).unwrap()
@@ -17,7 +23,7 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
     pub table_name: String,
     pub table_oid: postgres::types::Oid,
-    pub table_indexed_attributes: Vec<String>,
+    pub primary_indexed_attributes: Vec<String>,
 }
 
 pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo {
@@ -26,7 +32,7 @@ pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo 
         columns: vec![],
         table_name: "".to_string(),
         table_oid: 0,
-        table_indexed_attributes: vec![],
+        primary_indexed_attributes: vec![],
     };
 
     let index_type_query = r#"
@@ -81,18 +87,116 @@ pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo 
         }
         None => vec![],
     };
-    index_info.table_indexed_attributes = indexed_attributes;
+    index_info.primary_indexed_attributes = indexed_attributes;
     index_info
+}
+
+pub fn get_metadata_page(client: Arc<RefCell<Client>>, index_name: String) -> MetadataPage {
+    let btree_metadata_query = r#"
+        SELECT
+            version,
+            root,
+            level,
+            fastroot,
+            fastlevel
+        FROM bt_metap($1);
+    "#;
+    let result_metadata = client.borrow_mut().query(btree_metadata_query, &[&index_name]).unwrap();
+    let metadata_page = match result_metadata.get(0) {
+        Some(row) => {
+            let version: i32 = row.get(0);
+            let root: i64 = row.get(1);
+            let level: i64 = row.get(2);
+            let fast_root: i64 = row.get(3);
+            let fast_level: i64 = row.get(4);
+            MetadataPage::new(version, root, level, fast_root, fast_level)
+        }
+        None => MetadataPage::new(0, 0, 0, 0, 0),
+    };
+    metadata_page
+}
+
+// pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: String, index_info: Rc<IndexInfo>) -> (Item, Item, Item) {
+//     let btree_item_query = r#"
+//         SELECT *
+//         FROM bt_page_items($1, $2);
+//     "#;
+//     let result_items = client.borrow_mut().query(btree_item_query, &[&index_name, &page.id]).unwrap();
+//     let items = vec![];
+//     // for item  in result_items.iter() {
+//     //     items.push()
+//     // }
+//     (Item::new(vec![], None, None, None), Item::new(vec![], None, None, None), Item::new(vec![], None, None, None))
+// }
+
+pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<String, RowData> {
+    let in_query: String = ct_ids.iter().map(|ct_id| format!("{}::tid", ct_id))
+        .collect::<Vec<String>>().join(", ");
+    println!("IN: {}", in_query);
+    let primary_key_columns = index_info.primary_indexed_attributes.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
+    let columns = index_info.columns.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
+
+
+    let ct_ids_array = ct_ids.iter()
+        .map(|tid| format!("({},{})", tid.block_number, tid.offset_number))
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    let row_query = format!(r#"
+        SELECT ctid, {}, {}
+        FROM {}
+        WHERE ctid IN (SELECT ('('|| block_num || ',' || offset_num || ')')::tid FROM unnest(ARRAY[{}]) AS t(block_num integer , offset_num integer))
+    "#, primary_key_columns, columns, index_info.table_name, ct_ids_array);
+
+    println!("ROW QUERY: {}", row_query);
+    let rows = client.borrow_mut().query(&row_query, &[]).unwrap();
+
+
+    // Rows data in page should Map<ct_id, RowData>
+    // Row Data -> primary key data, standard_index_data
+    let mut row_data: HashMap<String, RowData> = HashMap::new();
+    for row in rows.iter() {
+        let mut i = 0;
+        let ct_id: Tid = row.get(i);
+        i += 1;
+
+        let mut pks_left = index_info.primary_indexed_attributes.len();
+        let mut pk_values: Vec<String> = vec![];
+        while pks_left > 0 {
+            let pk: String = row.get(i);
+            pks_left -= 1;
+            i += 1;
+            &pk_values.push(pk);
+        }
+
+        let mut cols_left = index_info.columns.len();
+        let mut col_vals: Vec<String> = vec![];
+        while cols_left > 0 {
+            let col: String = row.get(i);
+            cols_left -= 1;
+            i += 1;
+            &col_vals.push(col);
+        }
+        row_data.insert(format!("{}", ct_id), RowData {
+            primary_key_data: pk_values,
+            column_data: col_vals,
+        });
+    }
+
+    row_data
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::Arc;
     use postgres::Client;
-    use crate::db::client::{get_index_info, IndexInfo};
+    use crate::core::Tid;
+    use crate::db::client::{get_index_info, get_metadata_page, get_row, IndexInfo};
 
     fn setup_test_data(client: Arc<RefCell<Client>>) {
+        tear_down_test_data(Arc::clone(&client));
         client.borrow_mut().batch_execute(
             "CREATE TABLE IF NOT EXISTS test_table (
             id SERIAL PRIMARY KEY,
@@ -106,6 +210,16 @@ mod tests {
         ).unwrap();
     }
 
+    fn insert_data(client: Arc<RefCell<Client>>) {
+        client.borrow_mut().batch_execute(
+            "INSERT INTO test_table(id, name, email) VALUES \
+            (1, 'foo', 'foo1@gmail.com'),\
+            (2, 'bar', 'bar2@gmail.com'),\
+            (3, 'alice', 'alice3@gmail.com'),\
+            (4, 'bob', 'bob4@gmail.com')"
+        ).unwrap()
+    }
+
     fn tear_down_test_data(client: Arc<RefCell<Client>>) {
         client.borrow_mut().batch_execute(
             "DROP TABLE IF EXISTS test_table"
@@ -116,7 +230,7 @@ mod tests {
         assert_eq!(expected_index_info.index_type, actual_index_info.index_type);
         assert_eq!(expected_index_info.columns, actual_index_info.columns);
         assert_eq!(expected_index_info.table_name, actual_index_info.table_name);
-        assert_eq!(expected_index_info.table_indexed_attributes, actual_index_info.table_indexed_attributes);
+        assert_eq!(expected_index_info.primary_indexed_attributes, actual_index_info.primary_indexed_attributes);
     }
 
     #[test]
@@ -130,11 +244,38 @@ mod tests {
             index_type: "btree".to_string(),
             columns: vec!["name".to_string(), "email".to_string()],
             table_name: "test_table".to_string(),
-            table_indexed_attributes: vec!["id".to_string()],
+            primary_indexed_attributes: vec!["id".to_string()],
             table_oid: 0,
         };
         assert_index_info(&expected_index_info, &actual_index_info);
         assert_ne!(0, actual_index_info.table_oid);
+        tear_down_test_data(Arc::clone(&client_ref));
+    }
+
+    #[test]
+    pub fn test_metadata_page_information() {
+        let client_ref = Arc::new(RefCell::new(super::init_client(
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+        )));
+        setup_test_data(Arc::clone(&client_ref));
+        let actual_metadata_page = get_metadata_page(Arc::clone(&client_ref), "idx_users_name_email".to_string());
+        let expected_metadata_page = super::MetadataPage::new(1, 1, 1, 0, 0);
+        assert_ne!(expected_metadata_page, actual_metadata_page);
+        tear_down_test_data(Arc::clone(&client_ref));
+    }
+
+    #[test]
+    pub fn test_get_row() {
+        let client_ref = Arc::new(RefCell::new(super::init_client(
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+        )));
+        setup_test_data(Arc::clone(&client_ref));
+        insert_data(Arc::clone(&client_ref));
+        let actual_index_info = get_index_info(Arc::clone(&client_ref), "idx_users_name_email".to_string());
+        let row_data = get_row(Arc::clone(&client_ref), vec![Tid { block_number: 0, offset_number: 1 }, Tid { block_number: 0, offset_number: 2 }], Rc::new(actual_index_info));
+        for (k, v) in row_data.iter() {
+            println!("Key: {}, Value: {:?}", k, v);
+        }
         tear_down_test_data(Arc::clone(&client_ref));
     }
 }

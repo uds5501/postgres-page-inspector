@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 postgres = "0.19.7"
 getopts = "0.2.21"
+postgres-types = "0.2.6"
+bytes = "1.6.0"

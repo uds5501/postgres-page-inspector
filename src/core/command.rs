@@ -36,10 +36,12 @@ pub fn handle_command_call() {
     // let file_path = matches.opt_str("a").unwrap_or_else(|| "".to_string());
 
     // Connect to the database
-    let client = db::init_client("localhost".to_string(), "5432".to_string(), "postgres".to_string());
-
-    for row in db::get(Arc::new(RefCell::new(client)), "SELECT COUNT(*) FROM subcriptions".to_string()) {
-        let count: i64 = row.get(0);
-        println!("count: {}", count);
+    let client = Arc::new(RefCell::new(db::init_client(
+        "localhost".to_string(), "5432".to_string(), "postgres".to_string())));
+    let index_information = db::get_index_info(client, "index_name".to_string());
+    if index_information.index_type == "btree" {
+        println!("Index type is btree");
+    } else {
+        println!("Index type is not btree");
     }
 }
