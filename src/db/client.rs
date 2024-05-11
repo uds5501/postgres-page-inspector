@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use postgres;
 use postgres::{Client, Row};
-use crate::core::btree::{Item, MetadataPage, RowData, Tid};
+use crate::core::structs::{Item, MetadataPage, RowData, Tid};
 use crate::core::Page;
 
 pub fn init_client(host: String, port: String, db: String) -> Client {
@@ -116,20 +116,48 @@ pub fn get_metadata_page(client: Arc<RefCell<Client>>, index_name: String) -> Me
     metadata_page
 }
 
-// pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: String, index_info: Rc<IndexInfo>) -> (Item, Item, Item) {
-//     let btree_item_query = r#"
-//         SELECT *
-//         FROM bt_page_items($1, $2);
-//     "#;
-//     let result_items = client.borrow_mut().query(btree_item_query, &[&index_name, &page.id]).unwrap();
-//     let items = vec![];
-//     // for item  in result_items.iter() {
-//     //     items.push()
-//     // }
-//     (Item::new(vec![], None, None, None), Item::new(vec![], None, None, None), Item::new(vec![], None, None, None))
-// }
+pub fn get_page(client: Arc<RefCell<Client>>, page_id: i64, index_name: String, index_info: Rc<IndexInfo>) -> Page {
+    let page_query = r#"
+        SELECT
+        blkno,
+        type::text,
+        live_items,
+        dead_items,
+        avg_item_size,
+        page_size,
+        free_size,
+        btpo_prev,
+        btpo_next,
+        btpo_level,
+        btpo_flags
+        FROM bt_page_stats($1, $2)
+    "#.to_string();
+    let result_page = client.borrow_mut().query(&page_query, &[&index_name, &page_id]).unwrap();
+    let mut page = match result_page.get(0) {
+        Some(row) => {
+            let block_number: i64 = row.get(0);
+            let rtype: String = row.get(1);
+            let level: i64 = row.get(9);
+            let next_page_id: i64 = row.get(8);
+            let prev_page_id: i64 = row.get(7);
+            Page::new(block_number, level, rtype == "l", rtype == "r", next_page_id, prev_page_id)
+        }
+        None => Page::new(page_id, 0, false, false, 0, 0),
+    };
+    let (items, prev_item, next_item) = get_items(client.clone(), Rc::new(page.clone()), index_name.clone(), index_info.clone());
 
-pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<String, RowData> {
+    page.items = items;
+    if next_item.is_some() {
+        page.high_key = Some(next_item.unwrap().value)
+    }
+    page.prev_item = match prev_item {
+        None => { None }
+        Some(item) => { Some(Box::new(item)) }
+    };
+    page
+}
+
+pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<Tid, RowData> {
     let in_query: String = ct_ids.iter().map(|ct_id| format!("{}::tid", ct_id))
         .collect::<Vec<String>>().join(", ");
     println!("IN: {}", in_query);
@@ -148,13 +176,12 @@ pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<In
         WHERE ctid IN (SELECT ('('|| block_num || ',' || offset_num || ')')::tid FROM unnest(ARRAY[{}]) AS t(block_num integer , offset_num integer))
     "#, primary_key_columns, columns, index_info.table_name, ct_ids_array);
 
-    println!("ROW QUERY: {}", row_query);
     let rows = client.borrow_mut().query(&row_query, &[]).unwrap();
 
 
     // Rows data in page should Map<ct_id, RowData>
     // Row Data -> primary key data, standard_index_data
-    let mut row_data: HashMap<String, RowData> = HashMap::new();
+    let mut row_data: HashMap<Tid, RowData> = HashMap::new();
     for row in rows.iter() {
         let mut i = 0;
         let ct_id: Tid = row.get(i);
@@ -177,13 +204,58 @@ pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<In
             i += 1;
             &col_vals.push(col);
         }
-        row_data.insert(format!("{}", ct_id), RowData {
-            primary_key_data: pk_values,
-            column_data: col_vals,
-        });
+        row_data.insert(ct_id, RowData::new(pk_values, col_vals));
     }
 
     row_data
+}
+
+pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: String, index_info: Rc<IndexInfo>) -> (Vec<Item>, Option<Item>, Option<Item>) {
+    let btree_item_query = r#"
+        SELECT *
+        FROM bt_page_items($1, $2);
+    "#;
+    let result_items = client.borrow_mut().query(btree_item_query, &[&index_name, &page.id]).unwrap();
+    let mut items: Vec<Item> = vec![];
+
+    if page.is_leaf {
+        let ct_ids: Vec<Tid> = result_items.iter().map(|item| {
+            let ct_id: Tid = item.get(1);
+            ct_id
+        }).collect();
+        let rows = get_row(client.clone(), ct_ids, index_info.clone());
+        for item in result_items.iter() {
+            let row_id: Tid = item.get(1);
+            let row_id_value = rows.get(&row_id);
+            let value: Vec<i8> = row_id_value
+                .map(|row_data| row_data.byte_values.clone().unwrap_or_default())
+                .unwrap_or_else(|| item.get(5));
+            items.push(Item::new(value, None, Some(row_id.block_number as i64), Some(row_id)));
+        }
+    } else {
+        for item in result_items.iter() {
+            let next_page_tid: Tid = item.get(1);
+            let next_page_pointer: i64 = next_page_tid.block_number as i64;
+            let child_page = get_page(client.clone(), next_page_pointer, index_name.clone(), index_info.clone());
+
+            let value: Vec<i8> = match item.get(5) {
+                Some(value) => value,
+                None => vec![],
+            };
+            items.push(Item::new(value, Some(Box::new(child_page)), Some(next_page_pointer), None));
+        }
+    }
+
+    let mut prev_item: Option<Item> = None;
+    let next_item: Option<Item> = match page.next_page_id {
+        None => None,
+        Some(_) => { Some(items.remove(0)) }
+    };
+    if page.prev_page_id.is_some() || (page.prev_page_id.is_none() && !page.is_root && !page.is_leaf) {
+        prev_item = Some(items.remove(0));
+    }
+
+    (items, prev_item, next_item)
 }
 
 #[cfg(test)]
@@ -194,6 +266,8 @@ mod tests {
     use postgres::Client;
     use crate::core::Tid;
     use crate::db::client::{get_index_info, get_metadata_page, get_row, IndexInfo};
+    use crate::db::get_page;
+    use crate::core::btree::generate_btree;
 
     fn setup_test_data(client: Arc<RefCell<Client>>) {
         tear_down_test_data(Arc::clone(&client));
@@ -266,6 +340,7 @@ mod tests {
 
     #[test]
     pub fn test_get_row() {
+        // Todo: update this test with predictable data
         let client_ref = Arc::new(RefCell::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
         )));
@@ -276,6 +351,36 @@ mod tests {
         for (k, v) in row_data.iter() {
             println!("Key: {}, Value: {:?}", k, v);
         }
+        tear_down_test_data(Arc::clone(&client_ref));
+    }
+
+    #[test]
+    pub fn test_get_page() {
+        // Todo: update this test with predictable data
+        let client_ref = Arc::new(RefCell::new(super::init_client(
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+        )));
+        setup_test_data(Arc::clone(&client_ref));
+        insert_data(Arc::clone(&client_ref));
+        let index_name = "idx_users_name_email".to_string();
+        let actual_index_info = get_index_info(Arc::clone(&client_ref), index_name.clone());
+        let metadata_page = get_metadata_page(Arc::clone(&client_ref), index_name.clone());
+        let page = get_page(Arc::clone(&client_ref), metadata_page.root, index_name, Rc::new(actual_index_info));
+        println!("{:?}", page);
+        tear_down_test_data(Arc::clone(&client_ref));
+    }
+
+    #[test]
+    pub fn test_get_tree() {
+        let client_ref = Arc::new(RefCell::new(super::init_client(
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+        )));
+        setup_test_data(Arc::clone(&client_ref));
+        insert_data(Arc::clone(&client_ref));
+        let index_name = "idx_users_name_email".to_string();
+        let actual_index_info = get_index_info(Arc::clone(&client_ref), index_name.clone());
+        let tree = generate_btree(Arc::clone(&client_ref), index_name.clone(), Rc::new(actual_index_info));
+        println!("Tree: {:?}", tree);
         tear_down_test_data(Arc::clone(&client_ref));
     }
 }
