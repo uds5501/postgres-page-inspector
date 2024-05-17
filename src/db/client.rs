@@ -227,9 +227,11 @@ pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: Strin
         for item in result_items.iter() {
             let row_id: Tid = item.get(1);
             let row_id_value = rows.get(&row_id);
-            let value: Vec<i8> = row_id_value
-                .map(|row_data| row_data.byte_values.clone().unwrap_or_default())
-                .unwrap_or_else(|| item.get(5));
+            let x: String = item.get(5);
+            let value: String = match row_id_value {
+                Some(row_data) => row_data.byte_values.clone().unwrap_or_else(|| item.get(5)),
+                None => item.get(5),
+            };
             items.push(Item::new(value, None, Some(row_id.block_number as i64), Some(row_id)));
         }
     } else {
@@ -238,9 +240,9 @@ pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: Strin
             let next_page_pointer: i64 = next_page_tid.block_number as i64;
             let child_page = get_page(client.clone(), next_page_pointer, index_name.clone(), index_info.clone());
 
-            let value: Vec<i8> = match item.get(5) {
+            let value: String = match item.get(5) {
                 Some(value) => value,
-                None => vec![],
+                None => "".to_string(),
             };
             items.push(Item::new(value, Some(Box::new(child_page)), Some(next_page_pointer), None));
         }
@@ -264,7 +266,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Arc;
     use postgres::Client;
-    use crate::core::Tid;
+    use crate::core::{Tid};
     use crate::db::client::{get_index_info, get_metadata_page, get_row, IndexInfo};
     use crate::db::get_page;
     use crate::core::btree::generate_btree;
@@ -287,10 +289,14 @@ mod tests {
     fn insert_data(client: Arc<RefCell<Client>>) {
         client.borrow_mut().batch_execute(
             "INSERT INTO test_table(id, name, email) VALUES \
-            (1, 'foo', 'foo1@gmail.com'),\
-            (2, 'bar', 'bar2@gmail.com'),\
-            (3, 'alice', 'alice3@gmail.com'),\
-            (4, 'bob', 'bob4@gmail.com')"
+            (1, 'foo', 'foo@gmail.com'),\
+            (2, 'bar', 'bar@gmail.com'),\
+            (3, 'alice', 'alice@gmail.com'),\
+            (4, 'foo2', 'foo2@gmail.com'),\
+            (5, 'bob2', 'bob2@gmail.com'),\
+            (6, 'alice2', 'alice2@gmail.com'),\
+            (7, 'foo3', 'foo3@gmail.com'),\
+            (8, 'bob3', 'bob3@gmail.com')"
         ).unwrap()
     }
 
@@ -380,7 +386,7 @@ mod tests {
         let index_name = "idx_users_name_email".to_string();
         let actual_index_info = get_index_info(Arc::clone(&client_ref), index_name.clone());
         let tree = generate_btree(Arc::clone(&client_ref), index_name.clone(), Rc::new(actual_index_info));
-        println!("Tree: {:?}", tree);
+        println!("inmem btree: {:?}", tree);
         tear_down_test_data(Arc::clone(&client_ref));
     }
 }

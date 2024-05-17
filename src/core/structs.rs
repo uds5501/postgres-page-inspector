@@ -4,8 +4,10 @@ use std::rc::Rc;
 use bytes::{Buf, BufMut, BytesMut};
 use postgres_types::{FromSql, IsNull, to_sql_checked, ToSql, Type};
 use crate::db::IndexInfo;
+use serde::{Serialize, Deserialize};
 
-#[derive(PartialEq, Debug)]
+
+#[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub struct MetadataPage {
     pub version: i32,
     pub root: i64,
@@ -27,7 +29,7 @@ impl MetadataPage {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Page {
     pub id: i64,
     pub level: i64,
@@ -36,7 +38,7 @@ pub struct Page {
     pub items: Vec<Item>,
     pub prev_page_id: Option<i64>,
     pub next_page_id: Option<i64>,
-    pub high_key: Option<Vec<i8>>,
+    pub high_key: Option<String>,
     pub prev_item: Option<Box<Item>>,
     pub nb_items: Option<i32>,
 }
@@ -58,16 +60,16 @@ impl Page {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
-    pub value: Vec<i8>,
+    pub value: String,
     pub child: Option<Box<Page>>,
     pub pointer: Option<i64>,
     pub obj_id: Option<Tid>,
 }
 
 impl Item {
-    pub fn new(value: Vec<i8>, child: Option<Box<Page>>, pointer: Option<i64>, obj_id: Option<Tid>) -> Self {
+    pub fn new(value: String, child: Option<Box<Page>>, pointer: Option<i64>, obj_id: Option<Tid>) -> Self {
         Self {
             value,
             child,
@@ -77,7 +79,7 @@ impl Item {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Tree {
     metadata_page: Option<MetadataPage>,
     root: Page,
@@ -104,7 +106,7 @@ impl Tree {
 pub struct RowData {
     pub primary_key_data: Option<Vec<String>>,
     pub column_data: Option<Vec<String>>,
-    pub byte_values: Option<Vec<i8>>,
+    pub byte_values: Option<String>,
 }
 
 impl RowData {
@@ -115,7 +117,7 @@ impl RowData {
             byte_values: None,
         }
     }
-    pub fn new_bytes(byte_values: Vec<i8>) -> Self {
+    pub fn new_bytes(byte_values: String) -> Self {
         Self {
             primary_key_data: None,
             column_data: None,
@@ -125,7 +127,7 @@ impl RowData {
 }
 
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tid {
     pub block_number: u32,
     pub offset_number: u16,

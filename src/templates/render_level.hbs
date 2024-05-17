@@ -1,0 +1,11 @@
+<div class="level">
+    {{#each pages as |page|}}
+        {{> render_page page=page}}
+    {{/each}}
+</div>
+
+{{#unless (isLeaf pages.[0])}}
+    {{#with (child_level_pages pages) as |childPages|}}
+        {{> render_level pages=childPages}}
+    {{/with}}
+{{/unless}}

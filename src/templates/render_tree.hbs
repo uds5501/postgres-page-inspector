@@ -1,0 +1,296 @@
+<html>
+<head>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+    <script>
+        $(document).ready(function () {
+            $('#loading').hide();
+            $('#tree').show();
+
+            function draw_metapage_link() {
+                $('.line--meta').remove();
+                var metapage_pos = $('#metapage').position(),
+                        root_pos = $('.level.root').position();
+
+                create_line(metapage_pos.left + 250, metapage_pos.top + 25, root_pos.left, root_pos.top + 25, $('#metapage'), 'line--meta')
+            }
+
+            draw_metapage_link();
+
+            $(".page-head").click(function (e) {
+                e.preventDefault();
+                $(this).parent().find('.items').toggle();
+
+                var level = $(this).parents('.level').first();
+                draw_linked_list(level);
+                draw_children_lines(level);
+                draw_children_lines(level.next());
+                draw_children_lines(level.prev());
+            });
+
+            $(".item, .item-content").click(function (e) {
+                e.preventDefault();
+                var next_page_id = '#' + $(this).data("Child");
+                $(next_page_id).toggle();
+
+                var level = $(this).parents('.level').first();
+                draw_linked_list(level.next());
+                draw_children_lines(level);
+                draw_children_lines(level.prev());
+                draw_children_lines(level.next());
+
+            });
+
+
+            function hide_items(element) {
+                element.parent().find(".item").each(function () {
+                    var next_page_id = '#' + $(this).data("Child");
+                    $(next_page_id).hide();
+                });
+            }
+
+            function show_items(element) {
+                element.parent().find(".item").each(function () {
+                    var next_page_id = '#' + $(this).data("Child");
+                    $(next_page_id).show();
+                });
+            }
+
+            $(".items label").click(function (e) {
+                e.preventDefault();
+                if ($(this).hasClass('shown')) {
+                    hide_items($(this));
+                    $(this).removeClass('shown');
+                } else {
+                    show_items($(this));
+                    $(this).addClass('shown');
+                }
+
+                var level = $(this).parents('.level').first();
+                draw_linked_list(level.next());
+                draw_children_lines(level);
+                draw_children_lines(level.prev());
+                draw_children_lines(level.next());
+
+            });
+
+
+            function create_line(x1, y1, x2, y2, element, lineClass) {
+                var length = Math.sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2));
+                var angle = Math.atan2(y1 - y2, x1 - x2) * 180 / Math.PI;
+                var transform = 'rotate(' + angle + 'deg)';
+
+                var offset_left = x1;
+                if (x2 < x1) {
+                    offset_left = x2;
+                }
+                var offset_top = y1;
+                var line = $('<div>').appendTo(element)
+                        .addClass(lineClass)
+                        .css({
+                            'position': 'absolute',
+                            'transform': transform
+                        })
+                        .width(length)
+                        .offset({left: offset_left, top: offset_top});
+
+                return line;
+            }
+
+            function draw_linked_list(level) {
+                // delete lines from level
+                level.find('.linked--line').remove();
+
+                level.find('.page:visible').each(function () {
+                    if ($(this).data('Next') != undefined) {
+                        var next_page_id = '#' + $(this).data("Next") + ':visible',
+                                next_page = $(next_page_id);
+
+                        if (next_page.length > 0) {
+                            var x1 = $(this).position().left + 150,
+                                    y1 = $(this).position().top + $(this).height(),
+                                    x2 = x1,
+                                    y2 = next_page.position().top;
+
+                            create_line(x1, y1, x2, y2, level, 'linked--line');
+                        }
+                    }
+                });
+            }
+
+
+            function draw_children_lines(level) {
+                level.find('.line').remove();
+
+                level.find('.parent .items:visible').each(function () {
+                    $(this).find('.item').each(function () {
+                        if ($(this).data('Child') != undefined) {
+                            var next_page_id = '#' + $(this).data("Child") + ':visible',
+                                    next_page = $(next_page_id);
+
+                            if (next_page.length > 0) {
+                                var x1 = $(this).position().left + 300,
+                                        y1 = $(this).position().top,
+                                        x2 = next_page.position().left,
+                                        y2 = next_page.position().top;
+
+                                if (y2 < y1) {
+                                    create_line(x2, y2, x1, y1, level, 'line');
+                                } else {
+                                    create_line(x1, y1, x2, y2, level, 'line');
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+
+
+            $('#tree').scroll(function () {
+                $('.line').remove();
+                $('.linked--line').remove();
+                $('.line--meta').remove();
+
+                draw_metapage_link();
+                clearTimeout($.data(this, 'scrollTimer'));
+                $.data(this, 'scrollTimer', setTimeout(function () {
+                    // do something
+                    $('.level').each(function () {
+                        draw_linked_list($(this));
+                        draw_children_lines($(this));
+                    });
+                }, 250));
+            });
+
+        });
+    </script>
+
+    <style>
+        body {
+            color: #313131;
+        }
+
+        h1 {
+            width: 60%;
+            margin: 0 auto;
+            font-size: 16px;
+            margin-top: 30px;
+        }
+
+        #tree {
+            margin-top: 100px;
+            overflow-x: scroll;
+            white-space: nowrap;
+        }
+
+        .title {
+            display: inline-block;
+            width: 100%;
+            text-align: center;
+            padding: 10px 0px 10px 0px;
+            border-color: inherit;
+            border-bottom-style: solid;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        .level {
+            display: inline-block;
+            margin-right: 400px;
+            vertical-align: top;
+        }
+
+        .level.metapage {
+            margin-right: 100px;
+        }
+
+        .line, .line--meta, .linked--line {
+            transform-origin: 0 100%;
+            height: 2px;
+            background: #313131;
+        }
+
+        #metapage {
+            width: 250px;
+            background-color: #fff2e6;
+            border-width: 2px;
+            border-style: solid;
+            border-color: #ffd9b3;
+        }
+
+        .page {
+            background-color: #cceeff;
+            border-width: 2px;
+            border-style: solid;
+            border-color: #99ddff;
+            width: 300px;
+            margin-bottom: 50px;
+        }
+
+        .page-head {
+            border-color: inherit;
+        }
+
+        .items {
+            border-width: 2px 2px 0px 2px;
+            border-color: #b3ffb3;
+            border-style: solid;
+            background-color: #e6ffe6;
+        }
+
+        .item {
+            border-bottom: 2px solid #b3ffb3;
+        }
+
+    </style>
+    <title></title>
+</head>
+<body>
+
+<title>Tree for the index {{tree.index_name}} on table {{tree.index_table}} ({{tree.columns}})</title>
+
+<h1>Tree for the index {{tree.index_name}} on table {{tree.index_table}} ({{tree.columns}})</h1>
+
+<div id="loading">
+    Loading ...
+</div>
+
+<div id="tree" style="display:none;">
+    <!-- Render Metapage -->
+    {{#if tree.metadata_page}}
+        {{#with tree.metadata_page as |metapage|}}
+            <div class="metapage level">
+                <div id="metapage">
+                    <label class="title">Metapage</label>
+                    <ul class="metapage-fields">
+                        <li><label>Version: </label>{{metapage.version}}</li>
+                        <li><label>Root block number: </label>{{metapage.root}}</li>
+                        <li><label>Level: </label>{{metapage.level}}</li>
+                        <li><label>Fast Root block number: </label>{{metapage.fast_root}}</li>
+                        <li><label>Fast Level: </label>{{metapage.fast_level}}</li>
+                    </ul>
+                </div>
+            </div>
+        {{/with}}
+    {{/if}}
+
+    {{#with tree.root as |root|}}
+        in root.
+        <div class="root level">
+            {{#with root as |page|}}
+                {{> render_page page=page}}
+            {{/with}}
+        </div>
+
+        {{#unless root.is_leaf}}
+            {{#with (child_level_pages root) as |pages|}}
+                {{> render_level pages=pages}}
+            {{/with}}
+        {{/unless}}
+    {{/with}}
+</div>
+</body>
+
+</html>

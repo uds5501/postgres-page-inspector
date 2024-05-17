@@ -1,0 +1,49 @@
+here {{sample page}}
+<div class="page {{#unless page.is_leaf}}parent{{/unless}}" id="page-{{page.id}}" {{#if page.next_page_id}}data--next="page-{{page.next_page_id}}"{{/if}} {{#if page.prev_page_id}}data--prev="page-{{page.prev_page_id}}"{{/if}} >
+
+    <div class="page-head">
+        {{#if page.is_root}}
+            <label class="title">Root Page</label>
+        {{else if page.is_leaf}}
+            <label class="title">Leaf Page</label>
+        {{else}}
+            <label class="title">Parent Page</label>
+        {{/if}}
+
+        <ul class="page-data">
+            <li><label>Page block number: </label>{{page.id}}</li>
+            <li><label>Page level: </label>{{page.level}}</li>
+            {{#if (eq tree.index_type 'btree')}}
+                <li><label>Page high key: </label>{{page.high_key}}</li>
+            {{/if}}
+        </ul>
+    </div>
+
+    <div class="items">
+        <label class="title">Items</label>
+        {{#each page.items as |item|}}
+            <div class="item" {{#if item.child}}data--child="page-{{item.child.id}}"{{/if}}>
+                <ul class="item-content">
+                    <li><label>Value: </label>
+                        {{sample item.value}}
+                        {{#if (and (isArray item.value) (not (isString item.value)))}}
+                            [{{#each item.value as |val|}}
+                            <span style="width:100px; word-wrap:break-word; display:inline-block;"> {{val}}</span><br>
+                        {{/each}}]
+                        {{else}}
+                            {{val}}
+                        {{/if}}
+                    </li>
+                    {{#if (and page.is_leaf (eq tree.index_type 'btree'))}}
+                        <li><label>Pointer: </label>{{item.pointer}}</li>
+                        {{#if item.obj_id}}
+                            <li><label>Row Primary Key: </label>{{item.obj_id}}</li>
+                        {{else}}
+                            <li><label>Row deleted: </label> still in page until vacuum</li>
+                        {{/if}}
+                    {{/if}}
+                </ul>
+            </div>
+        {{/each}}
+    </div>
+</div>
