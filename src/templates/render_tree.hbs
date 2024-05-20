@@ -249,9 +249,9 @@
 </head>
 <body>
 
-<title>Tree for the index {{tree.index_name}} on table {{tree.index_table}} ({{tree.columns}})</title>
+<title>Tree for the index {{tree.index_name}} on table {{tree.table_name}} ({{tree.columns}})</title>
 
-<h1>Tree for the index {{tree.index_name}} on table {{tree.index_table}} ({{tree.columns}})</h1>
+<h1>Tree for the index {{tree.index_name}} on table {{tree.table_name}} ({{tree.columns}})</h1>
 
 <div id="loading">
     Loading ...
@@ -277,17 +277,15 @@
     {{/if}}
 
     {{#with tree.root as |root|}}
-        in root.
         <div class="root level">
+
             {{#with root as |page|}}
-                {{> render_page page=page}}
+                {{> render_page page=page index_type=../../index_type}}
             {{/with}}
         </div>
 
         {{#unless root.is_leaf}}
-            {{#with (child_level_pages root) as |pages|}}
-                {{> render_level pages=pages}}
-            {{/with}}
+            {{> render_level pages=../child_level_pages index_type=../index_type}}
         {{/unless}}
     {{/with}}
 </div>

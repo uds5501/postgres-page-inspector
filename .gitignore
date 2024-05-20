@@ -1,3 +1,5 @@
 /target
 /.idea
 history.*
+*.html
+*.log

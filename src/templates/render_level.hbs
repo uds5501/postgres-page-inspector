@@ -1,11 +1,13 @@
 <div class="level">
     {{#each pages as |page|}}
-        {{> render_page page=page}}
+        {{> render_page page=page index_type=index_type}}
     {{/each}}
 </div>
 
 {{#unless (isLeaf pages.[0])}}
+    aha page is leaf!
     {{#with (child_level_pages pages) as |childPages|}}
+        {{pages}}
         {{> render_level pages=childPages}}
     {{/with}}
 {{/unless}}

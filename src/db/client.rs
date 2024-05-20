@@ -1,7 +1,5 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::format;
-use std::iter::Map;
 use std::rc::Rc;
 use std::sync::Arc;
 use postgres;
@@ -9,8 +7,16 @@ use postgres::{Client, Row};
 use crate::core::structs::{Item, MetadataPage, RowData, Tid};
 use crate::core::Page;
 
-pub fn init_client(host: String, port: String, db: String) -> Client {
-    Client::connect(&format!("host={} port={} dbname={}", host, port, db), postgres::NoTls).unwrap()
+pub fn init_client(host: String, port: String, db: String, user: String, pass: String) -> Client {
+    let mut connection_string = format!("host={} port={} dbname={}", host, port, db);
+    if user != "" {
+        connection_string.push_str(&format!(" user={}", user));
+    }
+    if pass != "" {
+        connection_string.push_str(&format!(" password={}", pass));
+    }
+
+    Client::connect(connection_string.as_str(), postgres::NoTls).unwrap()
 }
 
 pub fn get(client: Arc<RefCell<Client>>, query: String) -> Vec<Row> {
@@ -71,15 +77,16 @@ pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo 
     index_info.index_type = index_type;
     index_info.columns = columns;
     index_info.table_name = table_name.clone();
-
+    println!("t: {:?} {:?}", table_name, table_oid);
     let table_indexed_attributes_query = r#"
-        SELECT array_agg(cast(a.attname as TEXT))
+        SELECT COALESCE(array_agg(cast(a.attname as TEXT)), '{}')
         FROM   pg_index i
         JOIN   pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
         WHERE  i.indrelid = $1
         AND    i.indisprimary;
     "#;
     let result_indexed_attributes = client.borrow_mut().query(table_indexed_attributes_query, &[&table_oid]).unwrap();
+    println!("{:?}", result_indexed_attributes);
     let indexed_attributes = match result_indexed_attributes.get(0) {
         Some(indexed_attributes) => {
             let indexed_columns: Vec<String> = indexed_attributes.get(0);
@@ -101,6 +108,7 @@ pub fn get_metadata_page(client: Arc<RefCell<Client>>, index_name: String) -> Me
             fastlevel
         FROM bt_metap($1);
     "#;
+    println!("Index name: {}", index_name);
     let result_metadata = client.borrow_mut().query(btree_metadata_query, &[&index_name]).unwrap();
     let metadata_page = match result_metadata.get(0) {
         Some(row) => {
@@ -158,9 +166,6 @@ pub fn get_page(client: Arc<RefCell<Client>>, page_id: i64, index_name: String, 
 }
 
 pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<Tid, RowData> {
-    let in_query: String = ct_ids.iter().map(|ct_id| format!("{}::tid", ct_id))
-        .collect::<Vec<String>>().join(", ");
-    println!("IN: {}", in_query);
     let primary_key_columns = index_info.primary_indexed_attributes.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
     let columns = index_info.columns.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
 
@@ -170,12 +175,20 @@ pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<In
         .collect::<Vec<String>>()
         .join(", ");
 
-    let row_query = format!(r#"
+    let mut row_query = "".to_string();
+    if primary_key_columns == "" {
+        row_query = format!(r#"
+        SELECT ctid, {}
+        FROM {}
+        WHERE ctid IN (SELECT ('('|| block_num || ',' || offset_num || ')')::tid FROM unnest(ARRAY[{}]) AS t(block_num integer , offset_num integer))
+    "#, columns, index_info.table_name, ct_ids_array);
+    } else {
+        row_query = format!(r#"
         SELECT ctid, {}, {}
         FROM {}
         WHERE ctid IN (SELECT ('('|| block_num || ',' || offset_num || ')')::tid FROM unnest(ARRAY[{}]) AS t(block_num integer , offset_num integer))
     "#, primary_key_columns, columns, index_info.table_name, ct_ids_array);
-
+    }
     let rows = client.borrow_mut().query(&row_query, &[]).unwrap();
 
 
@@ -227,7 +240,6 @@ pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: Strin
         for item in result_items.iter() {
             let row_id: Tid = item.get(1);
             let row_id_value = rows.get(&row_id);
-            let x: String = item.get(5);
             let value: String = match row_id_value {
                 Some(row_data) => row_data.byte_values.clone().unwrap_or_else(|| item.get(5)),
                 None => item.get(5),
@@ -316,7 +328,7 @@ mod tests {
     #[test]
     pub fn test_index_info() {
         let client_ref = Arc::new(RefCell::new(super::init_client(
-            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
         )));
         setup_test_data(Arc::clone(&client_ref));
         let actual_index_info = get_index_info(Arc::clone(&client_ref), "idx_users_name_email".to_string());
@@ -335,7 +347,7 @@ mod tests {
     #[test]
     pub fn test_metadata_page_information() {
         let client_ref = Arc::new(RefCell::new(super::init_client(
-            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
         )));
         setup_test_data(Arc::clone(&client_ref));
         let actual_metadata_page = get_metadata_page(Arc::clone(&client_ref), "idx_users_name_email".to_string());
@@ -348,7 +360,7 @@ mod tests {
     pub fn test_get_row() {
         // Todo: update this test with predictable data
         let client_ref = Arc::new(RefCell::new(super::init_client(
-            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
         )));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
@@ -364,7 +376,7 @@ mod tests {
     pub fn test_get_page() {
         // Todo: update this test with predictable data
         let client_ref = Arc::new(RefCell::new(super::init_client(
-            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
         )));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
@@ -379,14 +391,13 @@ mod tests {
     #[test]
     pub fn test_get_tree() {
         let client_ref = Arc::new(RefCell::new(super::init_client(
-            "localhost".to_string(), "5432".to_string(), "postgres".to_string(),
+            "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "".to_string(), "".to_string(),
         )));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
         let index_name = "idx_users_name_email".to_string();
         let actual_index_info = get_index_info(Arc::clone(&client_ref), index_name.clone());
         let tree = generate_btree(Arc::clone(&client_ref), index_name.clone(), Rc::new(actual_index_info));
-        println!("inmem btree: {:?}", tree);
         tear_down_test_data(Arc::clone(&client_ref));
     }
 }

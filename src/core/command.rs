@@ -1,46 +1,56 @@
 use std::cell::RefCell;
-use getopts::Options;
-use std::env;
+use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
+use crate::core::btree::generate_btree;
+use crate::core::render;
 use crate::db;
+use clap::Parser;
+
+/// Postgres CLI args
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Postgres host
+    #[arg(long, default_value = "localhost")]
+    host: String,
+
+    /// Postgres port
+    #[arg(short, long, default_value = "5432")]
+    port: String,
+
+    /// Postgres user
+    #[arg(short, long, default_value = "postgres")]
+    user: String,
+
+    /// Postgres database
+    #[arg(short, long, default_value = "postgres")]
+    db: String,
+
+    /// Postgres password
+    #[arg(short='x', long, default_value = "")]
+    password: String,
+
+    /// Postgres index
+    #[arg(short, long)]
+    index: String,
+
+    /// Output file path
+    #[arg(short, long, default_value = "output.html")]
+    output: String,
+}
 
 pub fn handle_command_call() {
-    let args: Vec<String> = env::args().collect();
-    let mut opts = Options::new();
-    opts.optflag("h", "help", "print this help menu");
-    opts.optopt("i", "host", "the host to connect to", "HOST");
-    opts.optopt("p", "port", "the port to connect to", "PORT");
-    opts.optopt("u", "user", "the user to connect as", "USER");
-    opts.optopt("d", "db", "the database name", "DB");
-    opts.optopt("w", "password", "the password to use", "PASSWORD");
-    opts.optopt("x", "index", "the index to use", "INDEX");
-    opts.optopt("a", "path", "the file path to use", "PATH");
-
-    let matches = match opts.parse(&args[1..]) {
-        Ok(m) => m,
-        Err(f) => panic!("{}", f.to_string()),
-    };
-
-    if matches.opt_present("h") {
-        println!("{}", opts.usage(&format!("Usage: {} [options]", args[0])));
-        return;
-    }
-
-    // TODO: Use these args
-    // let host = matches.opt_str("i").unwrap_or_else(|| "".to_string());
-    // let port = matches.opt_str("p").unwrap_or_else(|| "".to_string());
-    // let user = matches.opt_str("u").unwrap_or_else(|| "".to_string());
-    // let db = matches.opt_str("d").unwrap_or_else(|| "".to_string());
-    // let password = matches.opt_str("w").unwrap_or_else(|| "".to_string());
-    // let index = matches.opt_str("x").unwrap_or_else(|| "".to_string());
-    // let file_path = matches.opt_str("a").unwrap_or_else(|| "".to_string());
+    let args = Args::parse();
 
     // Connect to the database
-    let client = Arc::new(RefCell::new(db::init_client(
-        "localhost".to_string(), "5432".to_string(), "postgres".to_string())));
-    let index_information = db::get_index_info(client, "index_name".to_string());
+    let client_ref = Arc::new(RefCell::new(db::init_client(args.host, args.port, args.db,
+                                                           args.user, args.password)));
+    let index_information = db::get_index_info(Arc::clone(&client_ref), args.index.clone());
     if index_information.index_type == "btree" {
-        println!("Index type is btree");
+        let output_path = Path::new(args.output.as_str());
+        let tree = generate_btree(Arc::clone(&client_ref), args.index, Rc::new(index_information));
+        render(tree, output_path);
     } else {
         println!("Index type is not btree");
     }

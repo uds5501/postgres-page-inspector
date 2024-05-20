@@ -82,11 +82,11 @@ impl Item {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Tree {
     metadata_page: Option<MetadataPage>,
-    root: Page,
+    pub root: Page,
     index_name: String,
     table_name: String,
     columns: Vec<String>,
-    index_type: Option<String>,
+    pub index_type: Option<String>,
 }
 
 impl Tree {

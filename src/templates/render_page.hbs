@@ -1,4 +1,3 @@
-here {{sample page}}
 <div class="page {{#unless page.is_leaf}}parent{{/unless}}" id="page-{{page.id}}" {{#if page.next_page_id}}data--next="page-{{page.next_page_id}}"{{/if}} {{#if page.prev_page_id}}data--prev="page-{{page.prev_page_id}}"{{/if}} >
 
     <div class="page-head">
@@ -25,19 +24,18 @@ here {{sample page}}
             <div class="item" {{#if item.child}}data--child="page-{{item.child.id}}"{{/if}}>
                 <ul class="item-content">
                     <li><label>Value: </label>
-                        {{sample item.value}}
                         {{#if (and (isArray item.value) (not (isString item.value)))}}
                             [{{#each item.value as |val|}}
                             <span style="width:100px; word-wrap:break-word; display:inline-block;"> {{val}}</span><br>
                         {{/each}}]
                         {{else}}
-                            {{val}}
+                            {{item.value}}
                         {{/if}}
                     </li>
-                    {{#if (and page.is_leaf (eq tree.index_type 'btree'))}}
+                    {{#if (and page.is_leaf (eq ../index_type 'btree'))}}
                         <li><label>Pointer: </label>{{item.pointer}}</li>
                         {{#if item.obj_id}}
-                            <li><label>Row Primary Key: </label>{{item.obj_id}}</li>
+                            <li><label>Row Primary Key: </label>{{renderTid item.obj_id}}</li>
                         {{else}}
                             <li><label>Row deleted: </label> still in page until vacuum</li>
                         {{/if}}
