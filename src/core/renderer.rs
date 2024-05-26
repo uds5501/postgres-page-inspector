@@ -1,25 +1,53 @@
+use std::collections::HashMap;
 use crate::core::{Page, Tid, Tree};
 use std::path::{Path};
 use std::env;
 use std::fs::{File};
 use std::io::Write;
 use handlebars::*;
-use serde_json::{from_str, json};
+use handlebars::Handlebars;
+use serde_json::json;
 use serde_json::Value::Object;
 use serde_json::value::Value;
 
-
-struct ChildLevelPagesHelper;
-
 struct IsArrayHelper;
 
-struct IsFirstPageLeafHelper;
+struct ContextHelper;
 
 struct TidRenderHelper;
 
-struct IsLeafHelper;
+struct HasChildrenHelper;
 
-impl HelperDef for IsLeafHelper {
+struct SampleLookupHelper;
+
+impl HelperDef for SampleLookupHelper {
+    fn call_inner<'reg: 'rc, 'rc>(
+        &self,
+        h: &Helper<'rc>,
+        _: &'reg Handlebars<'reg>,
+        _: &'rc Context,
+        _: &mut RenderContext<'reg, 'rc>,
+    ) -> Result<ScopedJson<'rc>, RenderError> {
+        let map = h.param(0).unwrap();
+        let key = h.param(1).unwrap();
+        let mp: HashMap<String, Vec<Page>> = serde_json::from_value(map.value().clone()).unwrap();
+        let page: Page = serde_json::from_value(key.value().clone()).unwrap();
+        let k = format!("{}", page.id);
+        if page.is_leaf {
+            return Ok(json!([]).into());
+        }
+        let val = match mp.get(&k) {
+            Some(val) => val,
+            None => {
+                return Ok(json!([]).into());
+            }
+        };
+        let val_json = json!(val);
+        Ok(val_json.clone().into())
+    }
+}
+
+impl HelperDef for HasChildrenHelper {
     fn call<'reg: 'rc, 'rc>(
         &self,
         h: &Helper,
@@ -29,50 +57,24 @@ impl HelperDef for IsLeafHelper {
         out: &mut dyn Output,
     ) -> HelperResult {
         let param = h.param(0).unwrap();
-        let page: Page = serde_json::from_value(param.value().clone()).unwrap();
-        if page.is_leaf {
-            out.write("true").unwrap();
-        } else {
+        if param.is_value_missing() {
+            // TODO: recheck why is this happening?
             out.write("false").unwrap();
+            return Ok(());
         }
-        Ok(())
-    }
-}
-
-// Todo: Try setting context instead of writing to output
-impl HelperDef for ChildLevelPagesHelper {
-    fn call<'reg: 'rc, 'rc>(&self,
-                            h: &Helper,
-                            _: &Handlebars,
-                            ctx: &Context,
-                            rc: &mut RenderContext,
-                            out: &mut dyn Output) -> HelperResult {
-        let param = h.param(0).unwrap();
-        println!("child_level_pages path - {:?}", param.relative_path());
-        let page = param.value();
-        let base_vec: Vec<Value>;
-        if page.as_array().is_none() {
-            base_vec = vec![page.clone()];
+        let pages: Vec<Page> = serde_json::from_value(param.value().clone()).unwrap();
+        if pages.len() == 0 {
+            out.write("false").unwrap();
+            return Ok(());
+        }
+        if pages[0].is_leaf {
+            out.write("false").unwrap();
         } else {
-            base_vec = page.as_array().unwrap().to_vec();
-        }
-        let pages: Vec<Page> = base_vec.iter()
-            .map(|x| serde_json::from_value(x.clone()).unwrap()).collect();
-        let child_pages = child_level_pages(pages);
-        println!("child_pages - {:?}", child_pages.len());
-        let pages_json = json!(child_pages);
-        out.write(pages_json.to_string().as_ref())?;
-        let mut updated_ctx = ctx.data();
-        if let Object(m) = updated_ctx {
-            let mut new_ctx_data = m.clone();
-            new_ctx_data.insert("pages".to_string(), pages_json);
-            let json_obj = Object(new_ctx_data);
-            rc.set_context(Context::wraps(json_obj)?);
+            out.write("true").unwrap();
         }
         Ok(())
     }
 }
-
 
 impl HelperDef for IsArrayHelper {
     fn call<'reg: 'rc, 'rc>(
@@ -101,7 +103,7 @@ impl HelperDef for IsArrayHelper {
     }
 }
 
-impl HelperDef for IsFirstPageLeafHelper {
+impl HelperDef for ContextHelper {
     fn call<'reg: 'rc, 'rc>(
         &self,
         h: &Helper,
@@ -111,13 +113,7 @@ impl HelperDef for IsFirstPageLeafHelper {
         out: &mut dyn Output,
     ) -> HelperResult {
         let param = h.param(0).unwrap();
-        // println!("is_leaf param - {:?}", param);
-        let page: Vec<Page> = serde_json::from_value(param.value().clone()).unwrap();
-        if page.get(0).unwrap().is_leaf {
-            out.write("true").unwrap();
-        } else {
-            out.write("false").unwrap();
-        }
+        // println!("CONTEXT param - {:?}", param);
 
         Ok(())
     }
@@ -133,7 +129,6 @@ impl HelperDef for TidRenderHelper {
         out: &mut dyn Output,
     ) -> HelperResult {
         let param = h.param(0).unwrap();
-        println!("tid param - {:?}", param);
         let tid: Tid = serde_json::from_value(param.value().clone()).unwrap();
         let val = format!("({}, {})", tid.block_number, tid.offset_number);
         out.write(val.as_str()).unwrap();
@@ -171,19 +166,31 @@ impl HelperDef for IsStringHelper {
     }
 }
 
-fn child_level_pages(pages: Vec<Page>) -> Vec<Page> {
-    let mut child_pages: Vec<Page> = vec![];
+fn get_parent_child_mapping(pages: Vec<Page>) -> HashMap<String, Vec<Page>> {
+    let mut parent_child_map: HashMap<String, Vec<Page>> = HashMap::new();
     for page in pages {
+        let mut child_pages: Vec<Page> = vec![];
         if page.is_leaf {
-            break;
+            // if leaf page, don't add.
+            return parent_child_map;
         }
-        for item in page.items {
+        for item in page.items.clone() {
             if let Some(child) = item.child {
+                let mut child_hash_map = get_parent_child_mapping(vec![*child.clone()]);
+                for (page, child) in child_hash_map {
+                    if parent_child_map.contains_key(&page) {
+                        let mut existing_child = parent_child_map.get_mut(&page).unwrap();
+                        existing_child.append(&mut child.clone());
+                    } else {
+                        parent_child_map.insert(page, child.clone());
+                    }
+                }
                 child_pages.push(*child);
             }
         }
+        parent_child_map.insert(format!("{}", page.id), child_pages);
     }
-    child_pages
+    parent_child_map
 }
 
 pub fn render(tree: Tree, output_path: &Path) {
@@ -198,18 +205,16 @@ pub fn render(tree: Tree, output_path: &Path) {
     handlebars.register_template_file("render_tree", render_tree_file).unwrap();
     handlebars.register_template_file("render_page", render_page_file).unwrap();
     handlebars.register_template_file("render_level", render_level_file).unwrap();
-    handlebars.register_helper("child_level_pages", Box::new(ChildLevelPagesHelper));
     handlebars.register_helper("isArray", Box::new(IsArrayHelper));
     handlebars.register_helper("isString", Box::new(IsStringHelper));
-    handlebars.register_helper("isFirstPageLeaf", Box::new(IsFirstPageLeafHelper));
     handlebars.register_helper("renderTid", Box::new(TidRenderHelper));
-    handlebars.register_helper("isLeaf", Box::new(IsLeafHelper));
+    handlebars.register_helper("hasChildren", Box::new(HasChildrenHelper));
+    handlebars.register_helper("sample-lookup", Box::new(SampleLookupHelper));
 
     let mut map = serde_json::Map::new();
     map.insert("tree".to_string(), serde_json::to_value(&tree).unwrap());
-    let child_level_pages = child_level_pages(vec![tree.root.clone()]);
-    map.insert("child_level_pages".to_string(), serde_json::to_value(&child_level_pages).unwrap());
     map.insert("index_type".to_string(), serde_json::to_value(&tree.index_type.unwrap()).unwrap());
+    map.insert("parent_child_map".to_string(), serde_json::to_value(&get_parent_child_mapping(vec![tree.root.clone()])).unwrap());
     let rendered = handlebars.render("render_tree", &map).unwrap();
     let mut file = File::create(output_path).expect("Unable to create file");
     file.write_all(rendered.as_bytes()).expect("Unable to write data to file");
@@ -248,5 +253,112 @@ mod tests {
         println!("{:?}", json_str);
         let page: Vec<Page> = serde_json::from_str(json_str.as_str()).unwrap();
         println!("{:?}", page);
+    }
+
+    #[test]
+    pub fn test_get_parent_child_mapping() {
+        let leaf_a = Page {
+            id: 0,
+            level: 0,
+            is_leaf: true,
+            is_root: false,
+            items: vec![],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let leaf_b = Page {
+            id: 1,
+            level: 0,
+            is_leaf: true,
+            is_root: false,
+            items: vec![],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let leaf_c = Page {
+            id: 2,
+            level: 0,
+            is_leaf: true,
+            is_root: false,
+            items: vec![],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let par_ab = Page {
+            id: 3,
+            level: 1,
+            is_leaf: false,
+            is_root: false,
+            items: vec![Item {
+                value: "abc".to_string(),
+                child: Some(Box::new(leaf_a.clone())),
+                pointer: None,
+                obj_id: None,
+            }, Item {
+                value: "def".to_string(),
+                child: Some(Box::new(leaf_b.clone())),
+                pointer: None,
+                obj_id: None,
+            }],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let par_c = Page {
+            id: 4,
+            level: 1,
+            is_leaf: false,
+            is_root: false,
+            items: vec![Item {
+                value: "ghi".to_string(),
+                child: Some(Box::new(leaf_c.clone())),
+                pointer: None,
+                obj_id: None,
+            }],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let root = Page {
+            id: 5,
+            level: 2,
+            is_leaf: false,
+            is_root: true,
+            items: vec![Item {
+                value: "jkl".to_string(),
+                child: Some(Box::new(par_ab.clone())),
+                pointer: None,
+                obj_id: None,
+            }, Item {
+                value: "mno".to_string(),
+                child: Some(Box::new(par_c.clone())),
+                pointer: None,
+                obj_id: None,
+            }],
+            prev_page_id: None,
+            next_page_id: None,
+            high_key: None,
+            prev_item: None,
+            nb_items: None,
+        };
+        let mut expected_map = std::collections::HashMap::new();
+        expected_map.insert("5".to_string(), vec![par_ab, par_c]);
+        expected_map.insert("3".to_string(), vec![leaf_a, leaf_b]);
+        expected_map.insert("4".to_string(), vec![leaf_c]);
+        let parent_child_map = super::get_parent_child_mapping(vec![root]);
+        assert_eq!(parent_child_map, expected_map);
     }
 }

@@ -285,7 +285,7 @@
         </div>
 
         {{#unless root.is_leaf}}
-            {{> render_level pages=../child_level_pages index_type=../index_type}}
+            {{> render_level pages=(sample-lookup ../parent_child_map root) index_type=../index_type parent_child_map = ../parent_child_map}}
         {{/unless}}
     {{/with}}
 </div>

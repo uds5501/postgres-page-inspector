@@ -29,7 +29,7 @@ impl MetadataPage {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Page {
     pub id: i64,
     pub level: i64,
@@ -60,7 +60,7 @@ impl Page {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Item {
     pub value: String,
     pub child: Option<Box<Page>>,

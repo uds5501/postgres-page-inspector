@@ -125,6 +125,7 @@ pub fn get_metadata_page(client: Arc<RefCell<Client>>, index_name: String) -> Me
 }
 
 pub fn get_page(client: Arc<RefCell<Client>>, page_id: i64, index_name: String, index_info: Rc<IndexInfo>) -> Page {
+    println!("getting page {}", page_id);
     let page_query = r#"
         SELECT
         blkno,
@@ -166,6 +167,7 @@ pub fn get_page(client: Arc<RefCell<Client>>, page_id: i64, index_name: String, 
 }
 
 pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<Tid, RowData> {
+    println!("getting {} rows", ct_ids.len());
     let primary_key_columns = index_info.primary_indexed_attributes.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
     let columns = index_info.columns.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
 
@@ -224,6 +226,7 @@ pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<In
 }
 
 pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: String, index_info: Rc<IndexInfo>) -> (Vec<Item>, Option<Item>, Option<Item>) {
+    println!("getting items for page {}", page.id);
     let btree_item_query = r#"
         SELECT *
         FROM bt_page_items($1, $2);
@@ -236,15 +239,17 @@ pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: Strin
             let ct_id: Tid = item.get(1);
             ct_id
         }).collect();
-        let rows = get_row(client.clone(), ct_ids, index_info.clone());
-        for item in result_items.iter() {
-            let row_id: Tid = item.get(1);
-            let row_id_value = rows.get(&row_id);
-            let value: String = match row_id_value {
-                Some(row_data) => row_data.byte_values.clone().unwrap_or_else(|| item.get(5)),
-                None => item.get(5),
-            };
-            items.push(Item::new(value, None, Some(row_id.block_number as i64), Some(row_id)));
+        if ct_ids.len() > 0 {
+            let rows = get_row(client.clone(), ct_ids, index_info.clone());
+            for item in result_items.iter() {
+                let row_id: Tid = item.get(1);
+                let row_id_value = rows.get(&row_id);
+                let value: String = match row_id_value {
+                    Some(row_data) => row_data.byte_values.clone().unwrap_or_else(|| item.get(5)),
+                    None => item.get(5),
+                };
+                items.push(Item::new(value, None, Some(row_id.block_number as i64), Some(row_id)));
+            }
         }
     } else {
         for item in result_items.iter() {
@@ -263,10 +268,18 @@ pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: Strin
     let mut prev_item: Option<Item> = None;
     let next_item: Option<Item> = match page.next_page_id {
         None => None,
-        Some(_) => { Some(items.remove(0)) }
+        Some(_) => {
+            if items.len() > 0 {
+                Some(items.remove(0))
+            } else {
+                None
+            }
+        }
     };
-    if page.prev_page_id.is_some() || (page.prev_page_id.is_none() && !page.is_root && !page.is_leaf) {
-        prev_item = Some(items.remove(0));
+    if items.len() > 0 {
+        if page.prev_page_id.is_some() || (page.prev_page_id.is_none() && !page.is_root && !page.is_leaf) {
+            prev_item = Some(items.remove(0));
+        }
     }
 
     (items, prev_item, next_item)

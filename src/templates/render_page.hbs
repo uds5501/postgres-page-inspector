@@ -1,4 +1,6 @@
-<div class="page {{#unless page.is_leaf}}parent{{/unless}}" id="page-{{page.id}}" {{#if page.next_page_id}}data--next="page-{{page.next_page_id}}"{{/if}} {{#if page.prev_page_id}}data--prev="page-{{page.prev_page_id}}"{{/if}} >
+<div class="page {{#unless page.is_leaf}}parent{{/unless}}" id="page-{{page.id}}"
+     {{#if page.next_page_id}}data--next="page-{{page.next_page_id}}"{{/if}} {{#if
+        page.prev_page_id}}data--prev="page-{{page.prev_page_id}}"{{/if}} >
 
     <div class="page-head">
         {{#if page.is_root}}
@@ -12,13 +14,14 @@
         <ul class="page-data">
             <li><label>Page block number: </label>{{page.id}}</li>
             <li><label>Page level: </label>{{page.level}}</li>
-            {{#if (eq tree.index_type 'btree')}}
+            {{#if (eq index_type 'btree')}}
                 <li><label>Page high key: </label>{{page.high_key}}</li>
             {{/if}}
+            <li><label>Item count</label>: {{len page.items}}</li>
         </ul>
     </div>
 
-    <div class="items">
+    <div class="items" style="display: none;">
         <label class="title">Items</label>
         {{#each page.items as |item|}}
             <div class="item" {{#if item.child}}data--child="page-{{item.child.id}}"{{/if}}>
@@ -26,10 +29,10 @@
                     <li><label>Value: </label>
                         {{#if (and (isArray item.value) (not (isString item.value)))}}
                             [{{#each item.value as |val|}}
-                            <span style="width:100px; word-wrap:break-word; display:inline-block;"> {{val}}</span><br>
+                            <span style="width:250px; word-wrap:break-word; display:inline-block;"> {{val}}</span><br>
                         {{/each}}]
                         {{else}}
-                            {{item.value}}
+                            <span style="width:250px; word-wrap:break-word; display:inline-block;">{{item.value}}</span>
                         {{/if}}
                     </li>
                     {{#if (and page.is_leaf (eq ../index_type 'btree'))}}

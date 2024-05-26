@@ -1,13 +1,11 @@
 <div class="level">
     {{#each pages as |page|}}
-        {{> render_page page=page index_type=index_type}}
+        {{> render_page page=page index_type=../index_type}}
     {{/each}}
 </div>
 
-{{#unless (isLeaf pages.[0])}}
-    aha page is leaf!
-    {{#with (child_level_pages pages) as |childPages|}}
-        {{pages}}
-        {{> render_level pages=childPages}}
-    {{/with}}
-{{/unless}}
+{{#if (hasChildren pages)}}
+    {{#each pages as |page|}}
+        {{> render_level pages=(sample-lookup ../parent_child_map page) index_type=../index_type parent_child_map=../parent_child_map}}
+    {{/each}}
+{{/if}}
