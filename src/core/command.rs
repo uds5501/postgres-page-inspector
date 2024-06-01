@@ -6,7 +6,7 @@ use crate::core::btree::generate_btree;
 use crate::core::render;
 use crate::db;
 use clap::Parser;
-use log::error;
+use log::{error, info};
 
 /// Postgres CLI args
 #[derive(Parser, Debug)]
@@ -45,13 +45,14 @@ pub fn handle_command_call() {
     let args = Args::parse();
 
     // Connect to the database
-    let client_ref = Arc::new(RefCell::new(db::init_client(args.host, args.port, args.db,
-                                                           args.user, args.password)));
+    let client_ref = Arc::new(db::init_client(args.host, args.port, args.db,
+                                              args.user, args.password));
     let index_information = db::get_index_info(Arc::clone(&client_ref), args.index.clone());
     if index_information.index_type == "btree" {
         let output_path = Path::new(args.output.as_str());
         let tree = generate_btree(Arc::clone(&client_ref), args.index, Rc::new(index_information));
         render(tree, output_path);
+        info!("Output file generated at: {}", args.output);
     } else {
         error!("Index type is not btree");
     }

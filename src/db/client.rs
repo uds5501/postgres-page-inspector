@@ -8,8 +8,7 @@ use postgres::{Client, Row};
 use crate::core::structs::{Item, MetadataPage, RowData, Tid};
 use crate::core::Page;
 
-
-pub fn init_client(host: String, port: String, db: String, user: String, pass: String) -> Client {
+pub fn init_client(host: String, port: String, db: String, user: String, pass: String) -> RefCell<Client> {
     let mut connection_string = format!("host={} port={} dbname={}", host, port, db);
     if user != "" {
         connection_string.push_str(&format!(" user={}", user));
@@ -18,7 +17,7 @@ pub fn init_client(host: String, port: String, db: String, user: String, pass: S
         connection_string.push_str(&format!(" password={}", pass));
     }
 
-    Client::connect(connection_string.as_str(), postgres::NoTls).unwrap()
+    RefCell::new(Client::connect(connection_string.as_str(), postgres::NoTls).unwrap())
 }
 
 pub fn get(client: Arc<RefCell<Client>>, query: String) -> Vec<Row> {
@@ -342,9 +341,9 @@ mod tests {
 
     #[test]
     pub fn test_index_info() {
-        let client_ref = Arc::new(RefCell::new(super::init_client(
+        let client_ref = Arc::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
-        )));
+        ));
         setup_test_data(Arc::clone(&client_ref));
         let actual_index_info = get_index_info(Arc::clone(&client_ref), "idx_users_name_email".to_string());
         let expected_index_info = IndexInfo {
@@ -361,9 +360,9 @@ mod tests {
 
     #[test]
     pub fn test_metadata_page_information() {
-        let client_ref = Arc::new(RefCell::new(super::init_client(
+        let client_ref = Arc::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
-        )));
+        ));
         setup_test_data(Arc::clone(&client_ref));
         let actual_metadata_page = get_metadata_page(Arc::clone(&client_ref), "idx_users_name_email".to_string());
         let expected_metadata_page = super::MetadataPage::new(1, 1, 1, 0, 0);
@@ -374,9 +373,9 @@ mod tests {
     #[test]
     pub fn test_get_row() {
         // Todo: update this test with predictable data
-        let client_ref = Arc::new(RefCell::new(super::init_client(
+        let client_ref = Arc::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
-        )));
+        ));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
         let actual_index_info = get_index_info(Arc::clone(&client_ref), "idx_users_name_email".to_string());
@@ -390,9 +389,9 @@ mod tests {
     #[test]
     pub fn test_get_page() {
         // Todo: update this test with predictable data
-        let client_ref = Arc::new(RefCell::new(super::init_client(
+        let client_ref = Arc::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "postgres".to_string(), "".to_string(),
-        )));
+        ));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
         let index_name = "idx_users_name_email".to_string();
@@ -405,9 +404,9 @@ mod tests {
 
     #[test]
     pub fn test_get_tree() {
-        let client_ref = Arc::new(RefCell::new(super::init_client(
+        let client_ref = Arc::new(super::init_client(
             "localhost".to_string(), "5432".to_string(), "postgres".to_string(), "".to_string(), "".to_string(),
-        )));
+        ));
         setup_test_data(Arc::clone(&client_ref));
         insert_data(Arc::clone(&client_ref));
         let index_name = "idx_users_name_email".to_string();
