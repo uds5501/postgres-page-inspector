@@ -528,6 +528,7 @@ dependencies = [
  "bytes",
  "clap",
  "handlebars",
+ "log",
  "postgres",
  "postgres-types",
  "serde",

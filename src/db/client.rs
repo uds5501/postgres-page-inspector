@@ -2,10 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use log::{debug, info};
 use postgres;
 use postgres::{Client, Row};
 use crate::core::structs::{Item, MetadataPage, RowData, Tid};
 use crate::core::Page;
+
 
 pub fn init_client(host: String, port: String, db: String, user: String, pass: String) -> Client {
     let mut connection_string = format!("host={} port={} dbname={}", host, port, db);
@@ -77,7 +79,7 @@ pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo 
     index_info.index_type = index_type;
     index_info.columns = columns;
     index_info.table_name = table_name.clone();
-    println!("t: {:?} {:?}", table_name, table_oid);
+    debug!("t: {:?} {:?}", table_name, table_oid);
     let table_indexed_attributes_query = r#"
         SELECT COALESCE(array_agg(cast(a.attname as TEXT)), '{}')
         FROM   pg_index i
@@ -86,7 +88,7 @@ pub fn get_index_info(client: Arc<RefCell<Client>>, index: String) -> IndexInfo 
         AND    i.indisprimary;
     "#;
     let result_indexed_attributes = client.borrow_mut().query(table_indexed_attributes_query, &[&table_oid]).unwrap();
-    println!("{:?}", result_indexed_attributes);
+    debug!("{:?}", result_indexed_attributes);
     let indexed_attributes = match result_indexed_attributes.get(0) {
         Some(indexed_attributes) => {
             let indexed_columns: Vec<String> = indexed_attributes.get(0);
@@ -108,7 +110,7 @@ pub fn get_metadata_page(client: Arc<RefCell<Client>>, index_name: String) -> Me
             fastlevel
         FROM bt_metap($1);
     "#;
-    println!("Index name: {}", index_name);
+    info!("Getting metadata page for index: {}", index_name);
     let result_metadata = client.borrow_mut().query(btree_metadata_query, &[&index_name]).unwrap();
     let metadata_page = match result_metadata.get(0) {
         Some(row) => {
@@ -167,7 +169,7 @@ pub fn get_page(client: Arc<RefCell<Client>>, page_id: i64, index_name: String, 
 }
 
 pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<IndexInfo>) -> HashMap<Tid, RowData> {
-    println!("getting {} rows", ct_ids.len());
+    info!("getting {} rows", ct_ids.len());
     let primary_key_columns = index_info.primary_indexed_attributes.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
     let columns = index_info.columns.iter().map(|pk| format!("{}::text", pk)).collect::<Vec<String>>().join(", ");
 
@@ -226,7 +228,7 @@ pub fn get_row(client: Arc<RefCell<Client>>, ct_ids: Vec<Tid>, index_info: Rc<In
 }
 
 pub fn get_items(client: Arc<RefCell<Client>>, page: Rc<Page>, index_name: String, index_info: Rc<IndexInfo>) -> (Vec<Item>, Option<Item>, Option<Item>) {
-    println!("getting items for page {}", page.id);
+    info!("getting items for page {}", page.id);
     let btree_item_query = r#"
         SELECT *
         FROM bt_page_items($1, $2);

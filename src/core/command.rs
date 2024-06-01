@@ -6,6 +6,7 @@ use crate::core::btree::generate_btree;
 use crate::core::render;
 use crate::db;
 use clap::Parser;
+use log::error;
 
 /// Postgres CLI args
 #[derive(Parser, Debug)]
@@ -28,7 +29,7 @@ struct Args {
     db: String,
 
     /// Postgres password
-    #[arg(short='x', long, default_value = "")]
+    #[arg(short = 'x', long, default_value = "")]
     password: String,
 
     /// Postgres index
@@ -52,6 +53,6 @@ pub fn handle_command_call() {
         let tree = generate_btree(Arc::clone(&client_ref), args.index, Rc::new(index_information));
         render(tree, output_path);
     } else {
-        println!("Index type is not btree");
+        error!("Index type is not btree");
     }
 }

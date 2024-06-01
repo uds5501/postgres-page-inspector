@@ -7,12 +7,8 @@ use std::io::Write;
 use handlebars::*;
 use handlebars::Handlebars;
 use serde_json::json;
-use serde_json::Value::Object;
-use serde_json::value::Value;
 
 struct IsArrayHelper;
-
-struct ContextHelper;
 
 struct TidRenderHelper;
 
@@ -98,22 +94,6 @@ impl HelperDef for IsArrayHelper {
         } else {
             out.write("false").unwrap()
         }
-
-        Ok(())
-    }
-}
-
-impl HelperDef for ContextHelper {
-    fn call<'reg: 'rc, 'rc>(
-        &self,
-        h: &Helper,
-        _: &Handlebars,
-        _: &Context,
-        _: &mut RenderContext,
-        out: &mut dyn Output,
-    ) -> HelperResult {
-        let param = h.param(0).unwrap();
-        // println!("CONTEXT param - {:?}", param);
 
         Ok(())
     }
